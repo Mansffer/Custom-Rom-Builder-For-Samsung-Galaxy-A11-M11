@@ -53,11 +53,11 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: ${{ github.event.inputs.NAME }}   # Replace with a suitable name
-        path: ./zip/Custom_Rom_SDM450.zip
+        path: ./zip/${{ github.event.inputs.NAME }}.zip
 
     - name: Upload Artifacts TO Google Drive
       uses: Jumbo810/Upload_Github_Artifacts_TO_GDrive@v2.2.2
       with:
-        target: ./zip/Custom_Rom_SDM450.zip  # Caminho do artifact após o build
+        target: ./zip/${{ github.event.inputs.NAME }}.zip  # Caminho do artifact após o build
         credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }} # Nome do segredo
         parent_folder_id: 1-QhwOobjYMzQ8xd9Zloi1-OB7gDANAfP
