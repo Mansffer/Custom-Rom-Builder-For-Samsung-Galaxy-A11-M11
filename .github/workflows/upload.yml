@@ -13,7 +13,7 @@ on:
       ARCH:
         description: 'ARM64 or ARM32?'
         required: true
-        default: '32'                
+        default: '64'                
       NAME:
         description: 'Rom Name'
         required: true
@@ -30,8 +30,8 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install -y zip xz-utils unzip p7zip-full wget
-        
+        sudo apt install -y zip xz-utils unzip p7zip-full wget jq
+
     - name: Preparing Files
       run: |
         wget https://sourceforge.net/projects/samsung-galaxy-a01-m01/files/a11q.zip
@@ -49,15 +49,48 @@ jobs:
       run: |
         ./arm${{ github.event.inputs.ARCH }}_git
         
-    - name: Uploading The Zip
-      uses: actions/upload-artifact@v2
-      with:
-        name: ${{ github.event.inputs.NAME }}   # Replace with a suitable name
-        path: ./zip/Custom_Rom_SDM450.zip
+    - name: Uploading The Zip to Dropbox (Chunked)
+      run: |
+        FILE="./zip/Custom_Rom_SDM450.zip"
+        CHUNK_SIZE=157286400  # 150 MB por chunk
+        FILE_SIZE=$(stat -c%s "$FILE")
 
-    - name: Upload Artifacts TO Google Drive
-      uses: Jumbo810/Upload_Github_Artifacts_TO_GDrive@v2.2.2
-      with:
-        target: ./zip/Custom_Rom_SDM450.zip  # Caminho do artifact após o build
-        credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }} # Nome do segredo
-        parent_folder_id: 1-QhwOobjYMzQ8xd9Zloi1-OB7gDANAfP
+        if [ -f "$FILE" ]; then
+          echo "Uploading $FILE to Dropbox using chunked upload..."
+          
+          # Iniciar upload de sessão
+          SESSION_ID=$(curl -X POST https://content.dropboxapi.com/2/files/upload_session/start \
+            --header "Authorization: Bearer ${{ secrets.DROPBOX_ACCESS_TOKEN }}" \
+            --header "Dropbox-API-Arg: {\"close\": false}" \
+            --header "Content-Type: application/octet-stream" \
+            --data-binary @"$FILE" \
+            --silent | jq -r ".session_id")
+
+          OFFSET=0
+
+          # Upload em partes
+          while [ $OFFSET -lt $FILE_SIZE ]; do
+            NEXT_CHUNK_SIZE=$((FILE_SIZE - OFFSET))
+            if [ $NEXT_CHUNK_SIZE -gt $CHUNK_SIZE ]; then
+              NEXT_CHUNK_SIZE=$CHUNK_SIZE
+            fi
+
+            dd if="$FILE" bs=$NEXT_CHUNK_SIZE skip=$((OFFSET / CHUNK_SIZE)) count=1 2>/dev/null | \
+            curl -X POST https://content.dropboxapi.com/2/files/upload_session/append_v2 \
+              --header "Authorization: Bearer ${{ secrets.DROPBOX_ACCESS_TOKEN }}" \
+              --header "Dropbox-API-Arg: {\"cursor\": {\"session_id\": \"$SESSION_ID\", \"offset\": $OFFSET}, \"close\": false}" \
+              --header "Content-Type: application/octet-stream" \
+              --data-binary @-
+
+            OFFSET=$((OFFSET + NEXT_CHUNK_SIZE))
+            echo "Uploaded chunk, new offset: $OFFSET"
+          done
+
+          # Finalizar upload
+          curl -X POST https://content.dropboxapi.com/2/files/upload_session/finish \
+            --header "Authorization: Bearer ${{ secrets.DROPBOX_ACCESS_TOKEN }}" \
+            --header "Dropbox-API-Arg: {\"cursor\": {\"session_id\": \"$SESSION_ID\", \"offset\": $OFFSET}, \"commit\": {\"path\": \"/${{ github.event.inputs.NAME }}.zip\", \"mode\": \"add\", \"autorename\": true, \"mute\": false, \"strict_conflict\": false}}" \
+            --header "Content-Type: application/octet-stream"
+        else
+          echo "File $FILE does not exist and will not be uploaded."
+        fi
