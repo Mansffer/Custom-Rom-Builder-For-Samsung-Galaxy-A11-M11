@@ -17,7 +17,7 @@ on:
       NAME:
         description: 'Rom Name'
         required: true
-        default: 'LineageOS_19.1_A11_M11_ARM32_Gapps'                
+        default: 'LineageOS_19.1_A11_M11_ARM64_Gapps'                
 
 jobs:
   Build:
@@ -30,8 +30,9 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt update
-        sudo apt install -y zip xz-utils unzip p7zip-full wget jq
-
+        sudo apt-get install jq
+        sudo apt install -y zip xz-utils unzip p7zip-full wget
+        
     - name: Preparing Files
       run: |
         wget https://sourceforge.net/projects/samsung-galaxy-a01-m01/files/a11q.zip
@@ -49,22 +50,26 @@ jobs:
       run: |
         ./arm${{ github.event.inputs.ARCH }}_git
         
-    - name: Uploading The Zip to Dropbox (Chunked)
+    - name: Uploading The Zip to Dropbox
       run: |
-        FILE="./zip/Custom_Rom_SDM450.zip"
         CHUNK_SIZE=157286400  # 150 MB por chunk
-        FILE_SIZE=$(stat -c%s "$FILE")
+        FILE_PATH="./zip/Custom_Rom_SDM450.zip"
+        if [ -f "$FILE_PATH" ]; then
+          echo "Uploading $FILE_PATH to Dropbox using chunked upload..."
+          FILE_SIZE=$(stat -c%s "$FILE_PATH")
 
-        if [ -f "$FILE" ]; then
-          echo "Uploading $FILE to Dropbox using chunked upload..."
-          
           # Iniciar upload de sessão
           SESSION_ID=$(curl -X POST https://content.dropboxapi.com/2/files/upload_session/start \
             --header "Authorization: Bearer ${{ secrets.DROPBOX_ACCESS_TOKEN }}" \
             --header "Dropbox-API-Arg: {\"close\": false}" \
             --header "Content-Type: application/octet-stream" \
-            --data-binary @"$FILE" \
             --silent | jq -r ".session_id")
+
+          # Verificar se SESSION_ID foi criado corretamente
+          if [ -z "$SESSION_ID" ]; then
+            echo "Erro ao iniciar sessão de upload no Dropbox. Aborting."
+            exit 1
+          fi
 
           OFFSET=0
 
@@ -75,12 +80,12 @@ jobs:
               NEXT_CHUNK_SIZE=$CHUNK_SIZE
             fi
 
-            dd if="$FILE" bs=$NEXT_CHUNK_SIZE skip=$((OFFSET / CHUNK_SIZE)) count=1 2>/dev/null | \
-            curl -X POST https://content.dropboxapi.com/2/files/upload_session/append_v2 \
+            dd if="$FILE_PATH" bs=$NEXT_CHUNK_SIZE skip=$((OFFSET / CHUNK_SIZE)) count=1 iflag=fullblock 2>/dev/null | \
+            curl -T - -X POST https://content.dropboxapi.com/2/files/upload_session/append_v2 \
               --header "Authorization: Bearer ${{ secrets.DROPBOX_ACCESS_TOKEN }}" \
               --header "Dropbox-API-Arg: {\"cursor\": {\"session_id\": \"$SESSION_ID\", \"offset\": $OFFSET}, \"close\": false}" \
               --header "Content-Type: application/octet-stream" \
-              --data-binary @-
+              --header "Transfer-Encoding: chunked"
 
             OFFSET=$((OFFSET + NEXT_CHUNK_SIZE))
             echo "Uploaded chunk, new offset: $OFFSET"
@@ -89,8 +94,8 @@ jobs:
           # Finalizar upload
           curl -X POST https://content.dropboxapi.com/2/files/upload_session/finish \
             --header "Authorization: Bearer ${{ secrets.DROPBOX_ACCESS_TOKEN }}" \
-            --header "Dropbox-API-Arg: {\"cursor\": {\"session_id\": \"$SESSION_ID\", \"offset\": $OFFSET}, \"commit\": {\"path\": \"/${{ github.event.inputs.NAME }}.zip\", \"mode\": \"add\", \"autorename\": true, \"mute\": false, \"strict_conflict\": false}}" \
+            --header "Dropbox-API-Arg: {\"cursor\": {\"session_id\": \"$SESSION_ID\", \"offset\": $OFFSET}, \"commit\": {\"path\": \"/${{ github.event.inputs.NAME }}-${{ github.run_id }}/Custom_Rom_SDM450.zip\", \"mode\": \"add\", \"autorename\": true, \"mute\": false, \"strict_conflict\": false}}" \
             --header "Content-Type: application/octet-stream"
         else
-          echo "File $FILE does not exist and will not be uploaded."
+          echo "File $FILE_PATH does not exist and will not be uploaded."
         fi
