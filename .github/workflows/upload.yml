@@ -49,6 +49,12 @@ jobs:
     - name: Building
       run: |
         ./arm${{ github.event.inputs.ARCH }}_git
+
+    - name: Uploading The Zip to Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: ${{ github.event.inputs.NAME }}   # Replace with a suitable name
+        path: ./zip/Custom_Rom_SDM450.zip
         
     - name: Uploading The Zip to Dropbox
       run: |
